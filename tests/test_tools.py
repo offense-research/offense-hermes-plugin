@@ -221,3 +221,17 @@ def test_activity_reporter_is_silent_without_work_and_caches():
     busy.line()  # cached
     busy.line()
     assert len(busy_transport.calls) == 2  # no polling per turn
+
+
+def test_activity_reporter_reads_on_first_call_when_clock_starts_low(monkeypatch):
+    """A fresh VM can have a monotonic clock below the TTL; the first call
+    must still fetch instead of treating the empty cache as fresh."""
+    monkeypatch.setattr("offense_plugin.offense_tools.time.monotonic", lambda: 2.0)
+    transport = FakeTransport(
+        response(200, {"sandboxes": [{"status": "running"}]}),
+        response(200, {"swarms": []}),
+    )
+    client = make_client(transport)
+    line = ActivityReporter(client, ttl_seconds=45).line()
+    assert line is not None
+    assert "1 active sandbox" in line

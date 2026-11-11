@@ -570,14 +570,14 @@ class ActivityReporter:
     def __init__(self, client: OffenseClient, *, ttl_seconds: int = 45) -> None:
         self.client = client
         self.ttl_seconds = ttl_seconds
-        self._cached_at = 0.0
+        self._cached_at: float | None = None
         self._cached: dict[str, int] | None = None
 
     def line(self) -> str | None:
         if not self.client.has_key:
             return None
         now = time.monotonic()
-        if now - self._cached_at > self.ttl_seconds:
+        if self._cached_at is None or now - self._cached_at > self.ttl_seconds:
             try:
                 self._cached = active_work(self.client)
             except OffenseError:
