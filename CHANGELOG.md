@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Send an explicit `User-Agent`. The production edge answers urllib's default
+  agent with 403, so the plugin could not reach the API.
+- Added `scripts/smoke_live.py`, a read-only live contract check that an
+  invalid key gets `401 unauthorized` from the real API.
+
 ## 0.2.0
 
 - Credentials now go through Hermes: `OFFENSE_API_KEY` is declared in

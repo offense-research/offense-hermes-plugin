@@ -190,6 +190,12 @@ Admission check (requires a Hermes checkout):
 hermes plugins validate /path/to/offense-hermes-plugin
 ```
 
+Live read-only API contract check (invalid key, spends nothing):
+
+```sh
+python scripts/smoke_live.py
+```
+
 Layout:
 
 ```

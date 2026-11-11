@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from offense_plugin.offense_client import (
     API_KEY_ENV,
+    USER_AGENT,
     OffenseApiError,
     OffenseAuthError,
     OffenseClient,
@@ -53,6 +54,9 @@ def test_request_sends_bearer_and_parses_json():
     assert call["method"] == "GET"
     assert call["url"] == "https://api.example.test/api/v1/whoami"
     assert call["headers"]["authorization"] == "Bearer offense_sk_test"
+    # The production edge rejects urllib's default agent with a 403.
+    assert call["headers"]["user-agent"] == USER_AGENT
+    assert "Python-urllib" not in USER_AGENT
 
 
 def test_api_error_carries_code_and_status():

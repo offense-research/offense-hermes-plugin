@@ -25,6 +25,13 @@ from typing import Any
 
 DEFAULT_BASE_URL = "https://app.offense.sh"
 API_KEY_ENV = "OFFENSE_API_KEY"
+# The production edge rejects the default ``Python-urllib/x.y`` agent with 403,
+# so every request sends an explicit one. Keep the version in step with
+# plugin.yaml on release.
+USER_AGENT = (
+    "offense-hermes-plugin/0.2.1 "
+    "(+https://github.com/offense-research/offense-hermes-plugin)"
+)
 
 try:  # Hermes' profile-scoped secret route; absent outside a Hermes process.
     from agent.secret_scope import get_secret as _hermes_get_secret
@@ -171,7 +178,10 @@ class OffenseClient:
         if auth and not api_key:
             raise OffenseAuthError(self.not_configured_message())
 
-        request_headers: dict[str, str] = {"accept": "application/json"}
+        request_headers: dict[str, str] = {
+            "accept": "application/json",
+            "user-agent": USER_AGENT,
+        }
         if headers:
             request_headers.update(headers)
         if auth:

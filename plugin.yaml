@@ -1,5 +1,5 @@
 name: offense
-version: 0.2.0
+version: 0.2.1
 description: >-
   Offense security team for Hermes: spin up isolated security sandboxes,
   summon swarms against a verified staging target, read findings and evidence,
