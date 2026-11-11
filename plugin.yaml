@@ -1,0 +1,31 @@
+name: offense
+version: 0.1.0
+description: >-
+  Offense security team for Hermes: spin up isolated security sandboxes,
+  summon swarms against a verified staging target, read findings and evidence,
+  verify candidates, and retest fixes.
+author: Offense Research
+license: Apache-2.0
+homepage: https://github.com/offense-research/offense-hermes-plugin
+provides_tools:
+  - offense_status
+  - offense_login
+  - offense_logout
+  - offense_register_target
+  - offense_verify_target
+  - offense_launch_sandbox
+  - offense_list_sandboxes
+  - offense_get_sandbox
+  - offense_wait_sandbox
+  - offense_sandbox_findings
+  - offense_sandbox_evidence
+  - offense_stop_sandbox
+  - offense_verify_finding
+  - offense_retest_finding
+  - offense_list_swarms
+  - offense_summon_swarm
+  - offense_get_swarm
+  - offense_wait_swarm
+  - offense_stop_swarm
+provides_hooks:
+  - pre_llm_call
