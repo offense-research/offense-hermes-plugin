@@ -37,7 +37,6 @@ def make_client(transport: FakeTransport, **overrides) -> OffenseClient:
     return OffenseClient(
         base_url="https://api.example.test/",
         api_key="offense_sk_test",
-        config_path=overrides.pop("config_path", "/nonexistent/hermes.json"),
         transport=transport,
         sleep=lambda _seconds: None,
         **overrides,

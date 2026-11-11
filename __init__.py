@@ -3,6 +3,9 @@
 Registers the ``offense`` toolset (spin up security sandboxes, summon swarms,
 read findings, verify and retest), a bundled skill, a ``/offense`` slash
 command, and an optional active-work summary for the model.
+
+Credentials come through Hermes: the plugin declares ``OFFENSE_API_KEY`` in
+``plugin.yaml`` and reads it with :func:`agent.secret_scope.get_secret`.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from .offense_client import OffenseClient, OffenseError
+from .offense_client import API_KEY_ENV, OffenseClient, OffenseError
 from .offense_schemas import ALL as TOOL_SCHEMAS
 from .offense_schemas import TOOLSET
 from .offense_tools import ActivityReporter, active_work, build_handlers, dollars
@@ -19,7 +22,7 @@ from .offense_tools import ActivityReporter, active_work, build_handlers, dollar
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "client_name": "Hermes",
+    "base_url": "",
     "inject_active_work": True,
     "active_work_ttl_seconds": 45,
 }
@@ -51,11 +54,11 @@ def _command(client: OffenseClient, settings: dict[str, Any], raw_args: str) -> 
     if command in {"help", "-h", "--help"}:
         return HELP_TEXT
 
-    client.load_config()
     if not client.has_key:
         return (
-            "Offense is not connected yet. Ask me to 'connect Offense' so I can "
-            "start a device login, or see the plugin README."
+            "Offense is not configured yet. Create an API key at "
+            f"{client.keys_url()} and set {API_KEY_ENV} for this plugin "
+            "(Hermes prompts for it at install, or use the plugin settings)."
         )
 
     try:
@@ -108,9 +111,10 @@ def _command(client: OffenseClient, settings: dict[str, Any], raw_args: str) -> 
 
 def register(ctx: Any) -> None:
     """Wire tools, the bundled skill, the slash command, and the hook."""
-    client = OffenseClient().load_config()
     settings = _read_settings(ctx)
-    handlers = build_handlers(client, settings=settings)
+    base_url = str(settings.get("base_url") or "").strip() or None
+    client = OffenseClient(base_url=base_url)
+    handlers = build_handlers(client)
 
     for schema in TOOL_SCHEMAS:
         name = schema["name"]

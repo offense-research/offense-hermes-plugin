@@ -46,8 +46,6 @@ class FakeContext:
 @pytest.fixture(autouse=True)
 def isolated_home(monkeypatch, tmp_path):
     """Never read the developer's real ~/.config/offense during tests."""
-    monkeypatch.setenv("OFFENSE_CONFIG_DIR", str(tmp_path / "offense"))
-    monkeypatch.delenv("OFFENSE_CONFIG", raising=False)
     monkeypatch.delenv("OFFENSE_API_KEY", raising=False)
     monkeypatch.delenv("OFFENSE_BASE_URL", raising=False)
 
@@ -57,11 +55,9 @@ def test_register_wires_everything():
     ctx = FakeContext()
     plugin.register(ctx)
 
-    assert len(ctx.tools) == 19
+    assert len(ctx.tools) == 17
     assert set(ctx.tools) == {
         "offense_status",
-        "offense_login",
-        "offense_logout",
         "offense_register_target",
         "offense_verify_target",
         "offense_launch_sandbox",
@@ -100,16 +96,29 @@ def test_manifest_declares_registered_surface():
         assert name in manifest, f"{name} missing from provides_tools"
     assert "pre_llm_call" in manifest
     assert "name: offense" in manifest
+    assert "requires_hermes: \">=0.19.0\"" in manifest
+    assert "requires_env:" in manifest and "OFFENSE_API_KEY" in manifest
+    assert "config_schema:" in manifest
 
 
-def test_slash_command_help_and_disconnected():
+def test_slash_command_help_and_unconfigured():
     plugin = load_plugin()
     ctx = FakeContext()
     plugin.register(ctx)
     _name, handler, _description = ctx.commands[0]
 
     assert "Offense security team" in handler("help")
-    assert "not connected" in handler("status").lower()
+    text = handler("status").lower()
+    assert "not configured" in text
+    assert "offense_api_key" in text
+
+
+def test_base_url_setting_is_honored():
+    plugin = load_plugin()
+    ctx = FakeContext(config={"base_url": "https://self.example.test"})
+    plugin.register(ctx)
+    _name, handler, _description = ctx.commands[0]
+    assert "https://self.example.test/app/settings" in handler("status")
 
 
 def test_active_work_hook_is_gated_by_setting():

@@ -10,7 +10,7 @@ The agent never holds target credentials, a shell on a worker, or scanner
 controls. It selects from registered targets and policy-bounded budgets; the
 browser flow keeps credentials, authorization, and payment with the user.
 
-- 19 tools in the `offense` toolset
+- 17 tools in the `offense` toolset
 - A bundled `security-team` skill with the workflow and safety rules
 - A `/offense` slash command for status, sandboxes, and swarms
 - Optional per-turn awareness of work already running (on by default)
@@ -24,6 +24,12 @@ From GitHub:
 hermes plugins install offense-research/offense-hermes-plugin --enable
 ```
 
+Or from the plugin catalog, once listed:
+
+```sh
+hermes plugins install offense
+```
+
 From a local checkout:
 
 ```sh
@@ -31,29 +37,26 @@ git clone https://github.com/offense-research/offense-hermes-plugin ~/.hermes/pl
 hermes plugins enable offense
 ```
 
-Restart Hermes (or start a new session) and ask: *"connect Offense and check
-its status."* The plugin appears in `hermes plugins list` as `offense`.
+Restart Hermes (or start a new session) and ask: *"check Offense status."* The
+plugin appears in `hermes plugins list` as `offense`.
 
-## Connect
+## Configure
 
-The agent calls `offense_login`, shows you a verification URL and code, and you
-approve it in the browser. The API key is written to
-`~/.config/offense/hermes.json` with mode `0600`.
+The plugin needs an Offense API key:
 
-Already connected an Offense MCP client? The plugin reads the key from
-`~/.config/offense/mcp.json` too, so you do not have to approve twice. It never
-writes to that file.
+1. Create one in the Offense dashboard under **Settings**:
+   <https://app.offense.sh/app/settings>. Pick the narrowest scope preset that
+   covers what the agent should do.
+2. Set it for the plugin as `OFFENSE_API_KEY` — Hermes prompts for it during
+   install, and the Desktop plugin settings page has a masked field. It is
+   stored in the active profile through Hermes' normal credential route.
 
-Environment overrides (useful for self-hosted Offense):
+The plugin never writes or reads a key file of its own, and it never reads
+another tool's credential store. `offense_status` returns the keys URL when the
+key is missing. Never paste an API key into chat.
 
-| Variable | Meaning |
-|---|---|
-| `OFFENSE_API_KEY` | Use this key instead of the stored one |
-| `OFFENSE_BASE_URL` | API origin (default `https://app.offense.sh`) |
-| `OFFENSE_CONFIG` | Exact config file to read and write |
-| `OFFENSE_CONFIG_DIR` | Config directory (default `~/.config/offense`) |
-
-Never ask the user to paste an API key into chat.
+Self-hosted Offense: set the **Offense base URL** in the plugin settings (or
+`OFFENSE_BASE_URL` in the environment).
 
 ## Use
 
@@ -85,8 +88,6 @@ Typical flow the agent follows (the `security-team` skill spells this out):
 | Tool | Purpose |
 |---|---|
 | `offense_status` | Workspace, balance, target state, active sandboxes and swarms |
-| `offense_login` | Start or finish a device login |
-| `offense_logout` | Remove the local API key |
 | `offense_register_target` | Register or replace the staging target |
 | `offense_verify_target` | Verify control via the well-known token file |
 | `offense_launch_sandbox` | Spin up 1-5 isolated sandboxes with a budget and task |
@@ -128,9 +129,31 @@ Offense enforces its own boundaries; the plugin cannot widen them:
 
 Treat the target as staging. Ask before testing anything else.
 
+## Disclosure
+
+What a user should know before enabling this plugin:
+
+- **Network.** It talks only to the configured Offense API
+  (`https://app.offense.sh` by default, override for self-hosted).
+- **Data.** Assessment tasks, the registered target URL, and (during a run)
+  task instructions and findings travel to that API. The plugin does not read
+  or upload the user's files or repositories.
+- **Credentials.** The API key is read through Hermes'
+  `agent.secret_scope.get_secret`. The plugin never reads `.env`, `auth.json`,
+  an MCP client's config, or any other credential store, and it spawns no
+  shell commands.
+- **Spend.** Launches reserve real money on the user's Offense account; the
+  default is $1 per sandbox and `agents x $1` per swarm. The plugin states the
+  reservation before launching and stops/refunds on request.
+- **Telemetry.** None. No usage reporting beyond the Offense API calls the
+  tools make.
+- **Long-running work.** Waits are bounded by their `timeout_seconds`; nothing
+  runs in the background after the tool call returns.
+
 ## Configuration
 
-Plugin settings live under `plugins.entries.offense.settings`:
+Settings live under `plugins.entries.offense.settings` (the Desktop plugin
+settings page renders the same fields):
 
 ```yaml
 plugins:
@@ -139,9 +162,9 @@ plugins:
   entries:
     offense:
       settings:
-        client_name: Hermes          # name shown in the Offense device list
-        inject_active_work: true     # add a short active-work note to each turn
-        active_work_ttl_seconds: 45  # how long that note is cached
+        base_url: https://app.offense.sh   # self-hosted API origin
+        inject_active_work: true           # short active-work note per turn
+        active_work_ttl_seconds: 45        # how long that note is cached
 ```
 
 Set `inject_active_work: false` to stop the `pre_llm_call` note entirely; the
@@ -161,20 +184,27 @@ Run the tests from the repository root. `tests/pytest.ini` keeps pytest's
 rootdir inside `tests/` so pytest does not collect the plugin root, which is
 itself a Python package.
 
+Admission check (requires a Hermes checkout):
+
+```sh
+hermes plugins validate /path/to/offense-hermes-plugin
+```
+
 Layout:
 
 ```
 __init__.py          register(ctx): tools, skill, command, hook
-offense_client.py    standard-library HTTP client and device login
+offense_client.py    standard-library HTTP client and credential resolution
 offense_schemas.py   tool schemas the model sees
 offense_tools.py     tool handlers and the active-work reporter
 skills/security-team/SKILL.md
 tests/
 ```
 
-Compatibility: validated against Hermes `0.19.0` — all 19 tools, the skill,
-the slash command, and the `pre_llm_call` hook load through the real plugin
-manager. The Offense API contract is `/api/v1` at
+Compatibility: `requires_hermes: ">=0.19.0"`. Validated with
+`hermes plugins validate` (all checks pass, security scan safe) and loaded
+through the Hermes plugin manager with all 17 tools, the skill, the slash
+command, and the `pre_llm_call` hook. The Offense API contract is `/api/v1` at
 `https://app.offense.sh/api/openapi.json`.
 
 ## License

@@ -18,40 +18,11 @@ STATUS = {
     "description": (
         "Show the Offense connection: workspace, balance, key scopes, the "
         "registered target and its verification state, and active sandboxes "
-        "and swarms. Call this first to decide whether the user needs to "
-        "connect, register a target, or approve identities."
+        "and swarms. Call this first. If it reports not_configured, give the "
+        "user the returned keys_url so they can create an API key in the "
+        "Offense dashboard and set it for this plugin; never ask for the key "
+        "in chat."
     ),
-    "parameters": {"type": "object", "properties": {}, "required": []},
-}
-
-LOGIN = {
-    "name": "offense_login",
-    "description": (
-        "Connect Hermes to Offense with a device login. Without finish, start "
-        "the flow and show the user the returned verification URL and code. "
-        "After the user approves it in the browser, call again with "
-        "finish=true to save the API key. Never ask the user to paste a key "
-        "into chat."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "finish": {
-                "type": "boolean",
-                "description": "True to poll for an already-started login.",
-            },
-            "timeout_seconds": {
-                "type": "integer",
-                "description": "How long to wait for approval when finishing (default 45, max 300).",
-            },
-        },
-        "required": [],
-    },
-}
-
-LOGOUT = {
-    "name": "offense_logout",
-    "description": "Remove the locally stored Offense API key and pending login.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
@@ -370,8 +341,6 @@ STOP_SWARM = {
 
 ALL = [
     STATUS,
-    LOGIN,
-    LOGOUT,
     REGISTER_TARGET,
     VERIFY_TARGET,
     LAUNCH_SANDBOX,

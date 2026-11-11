@@ -66,12 +66,6 @@ def _int(args: dict[str, Any], key: str, default: int, low: int | None = None, h
     return value
 
 
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def dollars(micros: Any) -> str:
     try:
         return f"${int(micros) / 1_000_000:,.2f}"
@@ -151,13 +145,8 @@ def active_work(client: OffenseClient) -> dict[str, int]:
     }
 
 
-def build_handlers(
-    client: OffenseClient,
-    *,
-    settings: dict[str, Any] | None = None,
-) -> dict[str, Callable[..., str]]:
-    """Create one handler per tool, bound to a client and plugin settings."""
-    settings = settings or {}
+def build_handlers(client: OffenseClient) -> dict[str, Callable[..., str]]:
+    """Create one handler per tool, bound to a client."""
 
     def guard(function: Callable[..., str]) -> Callable[..., str]:
         @functools.wraps(function)
@@ -167,8 +156,9 @@ def build_handlers(
             except OffenseAuthError as error:
                 return fail(
                     str(error),
-                    code="not_connected",
-                    login_tool="offense_login",
+                    code="not_configured",
+                    keys_url=client.keys_url(),
+                    settings_hint="OFFENSE_API_KEY",
                     setup=client.setup_urls(),
                 )
             except OffenseApiError as error:
@@ -227,13 +217,12 @@ def build_handlers(
     @guard
     def status(args: dict[str, Any], **kwargs: Any) -> str:
         del args, kwargs
-        client.load_config()
         if not client.has_key:
             return fail(
-                "Not connected to Offense. Call offense_login, show the user "
-                "the verification URL and code, then finish the login.",
-                code="not_connected",
-                login_tool="offense_login",
+                client.not_configured_message(),
+                code="not_configured",
+                keys_url=client.keys_url(),
+                settings_hint="OFFENSE_API_KEY",
                 setup=client.setup_urls(),
             )
         whoami = client.whoami()
@@ -252,20 +241,6 @@ def build_handlers(
             setup=client.setup_urls(),
             **counts,
         )
-
-    @guard
-    def login(args: dict[str, Any], **kwargs: Any) -> str:
-        del kwargs
-        if _bool(args.get("finish")):
-            timeout = _int(args, "timeout_seconds", 45, 1, 300)
-            return ok(**client.finish_login(timeout))
-        return ok(**client.start_login(str(settings.get("client_name") or "Hermes")))
-
-    @guard
-    def logout(args: dict[str, Any], **kwargs: Any) -> str:
-        del args, kwargs
-        client.logout()
-        return ok(message="Removed the local Offense API key.")
 
     # -- targets -------------------------------------------------------
 
@@ -543,8 +518,6 @@ def build_handlers(
 
     return {
         "offense_status": status,
-        "offense_login": login,
-        "offense_logout": logout,
         "offense_register_target": register_target,
         "offense_verify_target": verify_target,
         "offense_launch_sandbox": launch_sandbox,

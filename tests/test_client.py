@@ -1,18 +1,16 @@
-"""Client tests: HTTP shape, config persistence, device login, polling."""
+"""Client tests: HTTP shape, credential resolution, polling."""
 
 from __future__ import annotations
 
-import json
-import stat
-from pathlib import Path
-
 import pytest
 from offense_plugin.offense_client import (
+    API_KEY_ENV,
     OffenseApiError,
     OffenseAuthError,
     OffenseClient,
     OffenseConnectionError,
     clean_base_url,
+    resolve_api_key,
 )
 
 from tests.helpers import FakeTransport, make_client, response
@@ -23,10 +21,27 @@ def test_clean_base_url():
     assert clean_base_url(None) == "https://app.offense.sh"
 
 
-def test_request_requires_key():
-    client = OffenseClient(base_url="https://x.test", api_key="", transport=FakeTransport())
-    with pytest.raises(OffenseAuthError):
+def test_request_requires_key(monkeypatch):
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+    client = OffenseClient(base_url="https://x.test", transport=FakeTransport())
+    assert not client.has_key
+    with pytest.raises(OffenseAuthError) as caught:
         client.whoami()
+    assert "not configured" in str(caught.value)
+    assert client.keys_url() in str(caught.value)
+
+
+def test_env_api_key_is_used(monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV, "offense_sk_env")
+    assert resolve_api_key() == "offense_sk_env"
+    client = OffenseClient(base_url="https://x.test", transport=FakeTransport())
+    assert client.has_key
+
+
+def test_explicit_key_overrides_environment(monkeypatch):
+    monkeypatch.setenv(API_KEY_ENV, "offense_sk_env")
+    client = OffenseClient(api_key="offense_sk_explicit", transport=FakeTransport())
+    assert client.api_key == "offense_sk_explicit"
 
 
 def test_request_sends_bearer_and_parses_json():
@@ -63,115 +78,6 @@ def test_connection_error_is_wrapped():
         client.whoami()
 
 
-def test_config_roundtrip_is_owner_only(tmp_path: Path):
-    path = tmp_path / "nested" / "hermes.json"
-    transport = FakeTransport()
-    client = make_client(transport, config_path=path).load_config()
-    client.save_config()
-
-    assert json.loads(path.read_text())["apiKey"] == "offense_sk_test"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
-
-    restored = OffenseClient(
-        base_url=None, api_key="", config_path=path, transport=transport
-    ).load_config()
-    assert restored.has_key
-    assert restored.api_key == "offense_sk_test"
-
-
-def test_reads_shared_mcp_config(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OFFENSE_CONFIG_DIR", str(tmp_path))
-    (tmp_path / "mcp.json").write_text(
-        json.dumps({"baseUrl": "https://mcp.example.test", "apiKey": "offense_sk_mcp"})
-    )
-    client = OffenseClient(
-        base_url=None, api_key=None, transport=FakeTransport(), sleep=lambda _s: None
-    ).load_config()
-    assert client.api_key == "offense_sk_mcp"
-    assert client.base_url == "https://mcp.example.test"
-
-
-def test_logout_does_not_reattach_to_shared_config(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OFFENSE_CONFIG_DIR", str(tmp_path))
-    (tmp_path / "mcp.json").write_text(json.dumps({"apiKey": "offense_sk_mcp"}))
-    client = OffenseClient(
-        base_url=None, api_key=None, transport=FakeTransport(), sleep=lambda _s: None
-    ).load_config()
-    assert client.has_key
-    client.logout()
-    client.load_config()
-    assert not client.has_key
-    assert (tmp_path / "mcp.json").exists()
-
-
-def test_env_api_key_is_used(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OFFENSE_API_KEY", "offense_sk_env")
-    monkeypatch.setenv("OFFENSE_CONFIG_DIR", str(tmp_path))
-    client = OffenseClient(
-        base_url=None, api_key=None, transport=FakeTransport(), sleep=lambda _s: None
-    ).load_config()
-    assert client.api_key == "offense_sk_env"
-
-
-def test_device_login_start_and_finish(tmp_path: Path):
-    config = tmp_path / "hermes.json"
-    transport = FakeTransport(
-        response(
-            201,
-            {
-                "device_code": "dev-1",
-                "user_code": "ABCD-1234",
-                "verification_uri": "https://app.offense.sh/activate?code=ABCD-1234",
-                "expires_in": 600,
-                "interval": 5,
-            },
-        ),
-        response(428, {"error": "authorization_pending"}),
-        response(
-            200,
-            {
-                "access_token": "offense_sk_new",
-                "workspace_id": "w1",
-                "scopes": ["assessments:create"],
-            },
-        ),
-    )
-    client = OffenseClient(
-        base_url="https://app.offense.sh",
-        api_key="",
-        config_path=config,
-        transport=transport,
-        sleep=lambda _seconds: None,
-    )
-    started = client.start_login()
-    assert started["user_code"] == "ABCD-1234"
-    assert client.pending_login is not None
-
-    finished = client.finish_login(timeout_seconds=10)
-    assert finished["connected"] is True
-    assert client.api_key == "offense_sk_new"
-    assert client.pending_login is None
-    assert json.loads(config.read_text())["apiKey"] == "offense_sk_new"
-
-    token_call = transport.calls[-1]
-    assert token_call["url"].endswith("/api/device/token")
-    assert "authorization" not in token_call["headers"]
-
-
-def test_device_login_expired_code():
-    transport = FakeTransport(response(400, {"error": "expired_token"}))
-    client = make_client(transport)
-    client.pending_login = {
-        "device_code": "dev-1",
-        "interval": 1,
-        "expires_at": __import__("time").time() + 100,
-        "base_url": client.base_url,
-    }
-    with pytest.raises(OffenseAuthError, match="expired"):
-        client.finish_login(timeout_seconds=5)
-    assert client.pending_login is None
-
-
 def test_wait_for_sandbox_returns_terminal_state():
     transport = FakeTransport(
         response(200, {"sandbox": {"id": "s1", "status": "testing"}}),
@@ -183,6 +89,23 @@ def test_wait_for_sandbox_returns_terminal_state():
     assert result["timed_out"] is False
     assert result["sandbox"]["status"] == "completed"
     assert len(transport.calls) == 2
+
+
+def test_wait_for_sandbox_times_out():
+    transport = FakeTransport(
+        response(200, {"sandbox": {"id": "s1", "status": "testing"}}),
+    )
+
+    def clock() -> float:
+        clock.value += 2.0
+        return clock.value
+
+    clock.value = 0.0
+    client = make_client(transport, now=clock)
+    result = client.wait_for_sandbox("s1", timeout_seconds=1, poll_seconds=1)
+    assert result["terminal"] is False
+    assert result["timed_out"] is True
+    assert len(transport.calls) == 1
 
 
 def test_wait_for_swarm_stops_when_terminal():
@@ -232,3 +155,21 @@ def test_launch_swarm_request_shape():
         "idempotencyKey": call["body"]["idempotencyKey"],
     }
     assert call["headers"]["idempotency-key"] == call["body"]["idempotencyKey"]
+
+
+def test_no_credential_file_is_written(tmp_path, monkeypatch):
+    """The plugin must not own a key file (catalog rule 11)."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv(API_KEY_ENV, "offense_sk_env")
+    client = OffenseClient(base_url="https://x.test", transport=FakeTransport())
+    assert client.has_key
+    assert list(tmp_path.iterdir()) == []
+    assert not (tmp_path / ".config").exists()
+
+
+def test_client_never_imports_shared_mcp_config():
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[1] / "offense_client.py"
+    ).read_text(encoding="utf-8")
+    assert "mcp.json" not in source
+    assert "save_config" not in source

@@ -1,8 +1,12 @@
 """Standard-library client for the Offense agent API.
 
-The client is intentionally small: one HTTP helper, one config file, and a
-device-login flow. It has no third-party dependencies so the plugin can run in
+The client is intentionally small: one HTTP helper and one credential
+resolution rule. It has no third-party dependencies so the plugin can run in
 any Hermes install, including ones that do not manage Python packages.
+
+Credentials come through Hermes: the plugin declares ``OFFENSE_API_KEY`` in
+``plugin.yaml`` and reads it with :func:`agent.secret_scope.get_secret`, which
+honors the active profile. There is no plugin-owned key file.
 
 API shape is documented at https://app.offense.sh/api/openapi.json.
 """
@@ -17,10 +21,15 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 DEFAULT_BASE_URL = "https://app.offense.sh"
+API_KEY_ENV = "OFFENSE_API_KEY"
+
+try:  # Hermes' profile-scoped secret route; absent outside a Hermes process.
+    from agent.secret_scope import get_secret as _hermes_get_secret
+except ImportError:  # pragma: no cover - exercised only outside Hermes
+    _hermes_get_secret = None
 
 # Sandbox states after which no further progress is possible.
 TERMINAL_SANDBOX_STATES = frozenset(
@@ -28,9 +37,6 @@ TERMINAL_SANDBOX_STATES = frozenset(
 )
 # A swarm is active while any member is queued or running.
 ACTIVE_SWARM_STATES = frozenset({"queued", "running"})
-
-CONFIG_FILENAME = "hermes.json"
-SHARED_CONFIG_FILENAME = "mcp.json"
 
 Payload = dict[str, Any]
 Transport = Callable[[str, str, dict[str, str], bytes | None, float], tuple[int, dict[str, str], bytes]]
@@ -70,30 +76,20 @@ def clean_base_url(value: str | None) -> str:
     return (value or DEFAULT_BASE_URL).strip().rstrip("/")
 
 
-def config_dir() -> Path:
-    """Return the Offense config directory, honoring OFFENSE_CONFIG_DIR."""
-    return Path(
-        os.environ.get("OFFENSE_CONFIG_DIR") or Path.home() / ".config" / "offense"
-    ).expanduser()
+def resolve_api_key() -> str:
+    """Return the Offense API key through Hermes' credential route.
 
-
-def default_config_path() -> Path:
-    """Return the path this plugin reads and writes."""
-    override = os.environ.get("OFFENSE_CONFIG")
-    if override:
-        return Path(override).expanduser()
-    return config_dir() / CONFIG_FILENAME
-
-
-def shared_config_paths() -> list[Path]:
-    """Return read-only config paths written by other Offense clients.
-
-    The MCP server stores its key in ``mcp.json``. Reading it means a user who
-    already connected an MCP client does not have to approve a second device
-    code; the plugin still writes only its own file.
+    Under Hermes, the profile-scoped secret is authoritative and a read failure
+    fails closed rather than picking up another profile's environment. Outside
+    Hermes (tests, a standalone import) the process environment is the only
+    source available.
     """
-    paths = [config_dir() / SHARED_CONFIG_FILENAME]
-    return [path for path in paths if path != default_config_path()]
+    if _hermes_get_secret is not None:
+        try:
+            return str(_hermes_get_secret(API_KEY_ENV) or "").strip()
+        except Exception:
+            return ""
+    return str(os.environ.get(API_KEY_ENV) or "").strip()
 
 
 def _urllib_transport(
@@ -114,94 +110,47 @@ def _urllib_transport(
         raise OffenseConnectionError(f"Could not reach Offense: {reason}") from error
 
 
-def _read_json(path: Path) -> Payload:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 class OffenseClient:
-    """Small Offense API client with device login and config persistence."""
+    """Small Offense API client with lazy, Hermes-scoped credential lookup."""
 
     def __init__(
         self,
         *,
         base_url: str | None = None,
         api_key: str | None = None,
-        config_path: str | Path | None = None,
         transport: Transport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], float] = time.time,
         timeout: float = 30.0,
     ) -> None:
         env_base = os.environ.get("OFFENSE_BASE_URL")
-        env_key = os.environ.get("OFFENSE_API_KEY")
         self.base_url = clean_base_url(base_url or env_base)
-        self.api_key = (api_key if api_key is not None else (env_key or "")).strip()
-        self.config_path = (
-            Path(config_path).expanduser() if config_path else default_config_path()
-        )
-        self._read_shared_config = api_key is None and config_path is None
-        self._explicit_base_url = bool(base_url or env_base)
+        self._api_key_override = api_key
         self._transport = transport or _urllib_transport
         self._sleep = sleep
         self._now = now
         self.timeout = timeout
-        self.pending_login: Payload | None = None
 
-    # -- configuration -------------------------------------------------
+    # -- credentials ---------------------------------------------------
+
+    @property
+    def api_key(self) -> str:
+        """Resolve the key on every read, so a session's scope always applies."""
+        if self._api_key_override is not None:
+            return self._api_key_override.strip()
+        return resolve_api_key()
 
     @property
     def has_key(self) -> bool:
         return bool(self.api_key)
 
-    def load_config(self) -> OffenseClient:
-        """Fill an unset key or base URL from disk. Never raises."""
-        data = _read_json(self.config_path)
-        if not data and self._read_shared_config:
-            for path in shared_config_paths():
-                data = _read_json(path)
-                if data:
-                    break
-        if not self.api_key and data.get("apiKey"):
-            self.api_key = str(data["apiKey"]).strip()
-        if not self._explicit_base_url and data.get("baseUrl"):
-            self.base_url = clean_base_url(str(data["baseUrl"]))
-        return self
-
-    def save_config(self) -> None:
-        """Write the key and base URL with owner-only permissions."""
-        directory = self.config_path.parent
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        payload = json.dumps(
-            {"baseUrl": self.base_url, "apiKey": self.api_key}, indent=2
-        ) + "\n"
-        fd = os.open(self.config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-        finally:
-            try:
-                os.chmod(self.config_path, 0o600)
-            except OSError:
-                pass
-
-    def logout(self) -> None:
-        """Drop the in-memory key, pending login, and the saved config file.
-
-        A key read from another client's config (``mcp.json``) stays in that
-        file; only this process stops using it, so logout does not silently
-        disconnect the other client or delete a file this plugin does not own.
-        """
-        self.api_key = ""
-        self.pending_login = None
-        self._read_shared_config = False
-        try:
-            self.config_path.unlink()
-        except FileNotFoundError:
-            pass
+    def not_configured_message(self) -> str:
+        return (
+            "Offense is not configured. Create an API key at "
+            f"{self.keys_url()} and set {API_KEY_ENV} for this plugin "
+            "(Hermes prompts for it at install; the Desktop plugin settings "
+            "page has a masked field)."
+        )
 
     # -- HTTP ----------------------------------------------------------
 
@@ -218,18 +167,15 @@ class OffenseClient:
         headers: dict[str, str] | None = None,
     ) -> Payload:
         """Call the API and return the decoded JSON object."""
-        if auth and not self.api_key:
-            raise OffenseAuthError(
-                "Not connected to Offense. Call offense_login, show the user the "
-                "verification URL and code, then call offense_login again with "
-                'finish=true after they approve.'
-            )
+        api_key = self.api_key
+        if auth and not api_key:
+            raise OffenseAuthError(self.not_configured_message())
 
         request_headers: dict[str, str] = {"accept": "application/json"}
         if headers:
             request_headers.update(headers)
         if auth:
-            request_headers["authorization"] = f"Bearer {self.api_key}"
+            request_headers["authorization"] = f"Bearer {api_key}"
         data = None
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -260,93 +206,6 @@ class OffenseClient:
 
     def whoami(self) -> Payload:
         return self.request("/api/v1/whoami")
-
-    def start_login(self, name: str = "Hermes") -> Payload:
-        data = self.request(
-            "/api/device/code",
-            method="POST",
-            body={"name": (name or "Hermes")[:120]},
-            auth=False,
-        )
-        interval = max(1, int(data.get("interval") or 5))
-        self.pending_login = {
-            "device_code": data.get("device_code"),
-            "interval": interval,
-            "expires_at": self._now() + max(30, int(data.get("expires_in") or 600)),
-            "base_url": self.base_url,
-        }
-        return {
-            "verification_uri": data.get("verification_uri"),
-            "user_code": data.get("user_code"),
-            "expires_in": data.get("expires_in", 600),
-            "interval": interval,
-            "message": (
-                f"Open {data.get('verification_uri')} and approve code "
-                f"{data.get('user_code')}. Then call offense_login with finish=true."
-            ),
-        }
-
-    def finish_login(self, timeout_seconds: int = 45) -> Payload:
-        pending = self.pending_login
-        if not pending:
-            raise OffenseAuthError(
-                "No pending login. Call offense_login first, then approve the "
-                "device code in the browser."
-            )
-        if pending.get("base_url") != self.base_url:
-            self.pending_login = None
-            raise OffenseAuthError(
-                "The login was started against a different Offense server. "
-                "Start again with offense_login."
-            )
-
-        deadline = min(
-            self._now() + max(1, timeout_seconds), float(pending["expires_at"])
-        )
-        interval = max(1, int(pending["interval"]))
-        while self._now() < deadline:
-            try:
-                data = self.request(
-                    "/api/device/token",
-                    method="POST",
-                    body={"device_code": pending["device_code"]},
-                    auth=False,
-                )
-            except OffenseApiError as error:
-                if error.status == 428 or error.code == "authorization_pending":
-                    self._sleep(interval)
-                    continue
-                if error.code in {"expired_token", "access_denied", "invalid_grant"}:
-                    self.pending_login = None
-                    friendly = {
-                        "expired_token": "The device code expired. Call offense_login to start again.",
-                        "access_denied": "The device login was denied in the browser.",
-                        "invalid_grant": "The device code is no longer valid. Call offense_login to start again.",
-                    }[error.code]
-                    raise OffenseAuthError(friendly) from error
-                raise
-
-            token = str(data.get("access_token") or "")
-            if not token:
-                raise OffenseAuthError("Offense returned no access token.")
-            self.api_key = token
-            self.pending_login = None
-            self.save_config()
-            return {
-                "connected": True,
-                "workspace_id": data.get("workspace_id"),
-                "scopes": data.get("scopes") or [],
-                "message": "Offense connected. The API key is stored with mode 0600.",
-            }
-
-        return {
-            "connected": False,
-            "pending": True,
-            "message": (
-                "Still waiting for browser approval. Ask the user to approve the "
-                "code, then call offense_login with finish=true again."
-            ),
-        }
 
     # -- targets -------------------------------------------------------
 
@@ -541,6 +400,7 @@ class OffenseClient:
     def setup_urls(self) -> Payload:
         base = self.base_url
         return {
+            "keys": self.keys_url(),
             "target": f"{base}/app/onboarding/target",
             "identities": f"{base}/app/onboarding/accounts?edit=1",
             "billing": f"{base}/app/billing",
@@ -548,9 +408,11 @@ class OffenseClient:
             "swarms": f"{base}/app/swarms",
         }
 
+    def keys_url(self) -> str:
+        return f"{self.base_url}/app/settings"
+
     def sandbox_url(self, sandbox_id: str) -> str:
         return f"{self.base_url}/app/assessments/{sandbox_id}"
 
     def swarm_url(self, swarm_id: str) -> str:
         return f"{self.base_url}/app/swarms/{swarm_id}"
-

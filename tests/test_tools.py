@@ -38,18 +38,19 @@ TARGET_UNVERIFIED = {
 
 def handlers_for(transport: FakeTransport):
     client = make_client(transport)
-    return build_handlers(client, settings={}), client
+    return build_handlers(client), client
 
 
-def test_status_without_key_reports_login_tool():
+def test_status_without_key_reports_keys_url():
     client = OffenseClient(
         base_url="https://x.test", api_key="", transport=FakeTransport()
     )
-    handlers = build_handlers(client, settings={})
+    handlers = build_handlers(client)
     payload = json.loads(handlers["offense_status"]({}))
     assert payload["success"] is False
-    assert payload["code"] == "not_connected"
-    assert payload["login_tool"] == "offense_login"
+    assert payload["code"] == "not_configured"
+    assert payload["keys_url"] == "https://x.test/app/settings"
+    assert payload["settings_hint"] == "OFFENSE_API_KEY"
     assert "target" in payload["setup"]
 
 
@@ -160,7 +161,7 @@ def test_wait_sandbox_reports_timeout():
 
     clock.value = 0.0
     client = make_client(transport, now=clock)
-    handlers = build_handlers(client, settings={})
+    handlers = build_handlers(client)
     payload = json.loads(
         handlers["offense_wait_sandbox"](
             {"sandbox_id": "s1", "timeout_seconds": 1, "poll_seconds": 1}

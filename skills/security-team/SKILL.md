@@ -35,10 +35,11 @@ the browser.
 
 1. **Check state** — call `offense_status`. It returns connection, workspace
    balance, target verification, identity count, and active work.
-2. **Connect if needed** — if `code=not_connected`, call `offense_login` with
-   no arguments. Show the user the verification URL and code exactly as
-   returned. After they approve in the browser, call `offense_login` with
-   `finish=true`.
+2. **Configure if needed** — if `code=not_configured`, give the user the
+   `keys_url` from the result so they can create an Offense API key, then tell
+   them to set `OFFENSE_API_KEY` for the plugin (Hermes prompts for it at
+   install; the Desktop plugin settings page has a masked field). Never ask
+   for the key in chat.
 3. **Prepare the target** — register with `offense_register_target` (http(s)
    staging URL). Show the user `verification.url` and `verification.token`
    from the result and ask them to publish the token at that well-known path.
