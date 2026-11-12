@@ -1,0 +1,48 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "offense",
+  "version": "0.3.0",
+  "description": "Offense security tools for Hermes: free dependency advisory audits and prepaid hosted security tools through the official Offense MCP server, with a quote and explicit approval before any paid call.",
+  "author": {
+    "name": "Offense Research"
+  },
+  "homepage": "https://offense.sh",
+  "repository": "https://github.com/offense-research/offense-hermes-plugin",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "assessment",
+    "dependencies",
+    "mcp",
+    "offense"
+  ],
+  "extensions": {
+    "com.nousresearch.hermes": {
+      "config_schema": {
+        "api_key": {
+          "type": "secret",
+          "env": "OFFENSE_API_KEY",
+          "label": "Offense API key",
+          "description": "Hosted security tools only; the free dependency audit needs no account. Create one at https://app.purpleteam.sh/account. Stored in the active Hermes profile, never in this plugin."
+        }
+      },
+      "servers": {
+        "offense": {
+          "trust": "untrusted",
+          "costs": {
+            "offense.security_call": {
+              "credits": [
+                50000,
+                1000000
+              ],
+              "note": "per reviewed quote, USD-micros"
+            },
+            "offense.audit_dependencies": 0
+          },
+          "spend_limit": 5000000,
+          "cost_unit": "micros"
+        }
+      }
+    }
+  }
+}

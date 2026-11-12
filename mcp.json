@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "offense": {
+      "type": "streamable-http",
+      "url": "https://app.purpleteam.sh/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OFFENSE_API_KEY}"
+      }
+    }
+  }
+}
